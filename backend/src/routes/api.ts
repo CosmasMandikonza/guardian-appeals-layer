@@ -150,7 +150,7 @@ export async function registerRoutes(app: FastifyInstance) {
         
         return {
           ...caseAsset,
-          contentTitle: sample?.title || dkgContent?.name || 'Appeal Case',
+          contentTitle: sample?.title || 'Appeal Case',
           contentType: sample?.contentType || 'video',
           creatorName: sample?.creatorName || caseAsset.creatorDid.split(':').pop(),
         };
