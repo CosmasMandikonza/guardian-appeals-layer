@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import type { ContentItem, CaseItem, MetricsData } from '../types';
 
-const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:3001';
+const API_BASE = 'https://guardian-appeals-layer.onrender.com/api';;
 
 interface AppState {
   // Content
