@@ -19,58 +19,7 @@ import { sampleDataset, getFlaggedContent, calculateBaselineAccuracy } from '../
 import { processAppealCase, processAllPendingCases } from '../agents/evidenceAgent.js';
 import x402 from '../x402/handler.js';
 import { nanoid } from 'nanoid';
-import { sampleDataset } from '../data/sampleDataset.js';
 
-// Exported seed function for auto-seeding on startup
-export async function seedDemoAppeals() {
-  const { dkgClient } = await import('../dkg/client.js');
-  const falsePositives = sampleDataset.filter(s => s.isFalsePositive && s.guardianClassification !== 'safe');
-  const results = [];
-  
-  for (const sample of falsePositives) {
-    const allContent = await dkgClient.getAllContentAssets();
-    const contentMatch = allContent.data?.find(c => c.contentHash === sample.contentHash);
-    
-    if (!contentMatch) continue;
-    
-    const caseResult = await dkgClient.publishCaseAsset({
-      '@context': 'https://schema.org',
-      '@type': 'CreativeWork',
-      contentReference: contentMatch['@id'],
-      creatorDid: sample.creatorDid,
-      appealStatus: 'open',
-      appealStatement: `This content was incorrectly flagged as ${sample.guardianClassification}. ${sample.verificationNotes || 'I am the original creator.'}`,
-      priority: Math.random() > 0.5,
-      evidence: [],
-      resolution: {
-        '@type': 'Action',
-        status: 'pending',
-        decidedBy: null,
-        decisionTime: null,
-        confidenceScore: null,
-        reasoning: null,
-        paymentTx: null,
-      },
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    });
-
-    if (caseResult.success) {
-      const { processAppeal } = await import('../agents/evidenceAgent.js');
-      const processed = await processAppeal(caseResult.data['@id']);
-      results.push({
-        sampleId: sample.id,
-        title: sample.title,
-        caseId: caseResult.data['@id'],
-        processed: processed.success,
-        decision: processed.data?.decision || 'pending',
-      });
-    }
-  }
-  
-  console.log(`[Seed] Seeded ${results.length} demo appeals`);
-  return results;
-}
 //Types
 interface CreateCaseBody {
   contentId: string;
@@ -79,8 +28,8 @@ interface CreateCaseBody {
 }
 
 interface FastTrackBody {
-  paymentPayload?: string; // Base64-encoded x402 payment
-  walletAddress?: string;  // For demo mode
+  paymentPayload?: string;
+  walletAddress?: string;
 }
 
 // ============================================================================
@@ -95,13 +44,9 @@ export async function registerRoutes(app: FastifyInstance) {
    * GET /api/content - List all flagged content
    */
   app.get('/api/content', async (request, reply) => {
-    // Get flagged sample data
     const flaggedContent = getFlaggedContent();
-    
-    // Get any content from DKG
     const dkgContent = await dkgClient.getAllContentAssets();
     
-    // Combine sample data with DKG data
     const combined = flaggedContent.map(sample => {
       const dkgMatch = dkgContent.data?.find(
         d => d.contentHash === sample.contentHash
@@ -123,7 +68,6 @@ export async function registerRoutes(app: FastifyInstance) {
         guardianClassification: sample.guardianClassification,
         guardianScore: sample.guardianScore,
         guardianReason: sample.guardianReason,
-        // Hide ground truth from API (for demo transparency, but wouldn't expose in production)
         hasOriginalSource: !!sample.originalSource,
       };
     });
@@ -141,13 +85,11 @@ export async function registerRoutes(app: FastifyInstance) {
   app.get('/api/content/:id', async (request: FastifyRequest<{ Params: { id: string } }>, reply) => {
     const { id } = request.params;
     
-    // Find in sample data
     const sample = sampleDataset.find(s => s.id === id);
     if (!sample) {
       return reply.code(404).send({ success: false, error: 'Content not found' });
     }
     
-    // Check DKG
     const dkgId = `did:dkg:content:${id}`;
     const dkgResult = await dkgClient.getContentAsset(dkgId);
     
@@ -183,15 +125,10 @@ export async function registerRoutes(app: FastifyInstance) {
     const allCases = await dkgClient.getAllCaseAssets();
     const allContent = await dkgClient.getAllContentAssets();
     
-    // Enrich with content info
     const enriched = await Promise.all(
       (allCases.data || []).map(async (caseAsset) => {
         const contentRef = caseAsset.contentReference;
-        
-        // Find the DKG content asset
         const dkgContent = allContent.data?.find(c => c['@id'] === contentRef);
-        
-        // Match sample data by contentHash
         const sample = dkgContent 
           ? sampleDataset.find(s => s.contentHash === dkgContent.contentHash)
           : null;
@@ -205,7 +142,6 @@ export async function registerRoutes(app: FastifyInstance) {
       })
     );
     
-    // Sort by date, newest first
     enriched.sort((a, b) => 
       new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
     );
@@ -222,8 +158,6 @@ export async function registerRoutes(app: FastifyInstance) {
    */
   app.get('/api/cases/:id', async (request: FastifyRequest<{ Params: { id: string } }>, reply) => {
     const { id } = request.params;
-    
-    // Handle both full DKG ID and short ID
     const fullId = id.startsWith('did:') ? id : `did:dkg:case:${id}`;
     
     const caseResult = await dkgClient.getCaseAsset(fullId);
@@ -232,11 +166,7 @@ export async function registerRoutes(app: FastifyInstance) {
     }
     
     const caseAsset = caseResult.data;
-    
-    // Get associated evidence
     const evidenceResult = await dkgClient.getEvidenceForCase(fullId);
-    
-    // Get content details
     const contentId = caseAsset.contentReference.split(':').pop();
     const sample = sampleDataset.find(s => s.id === contentId);
     
@@ -273,12 +203,10 @@ export async function registerRoutes(app: FastifyInstance) {
       });
     }
     
-    // Create content reference
     const contentReference = contentId.startsWith('did:') 
       ? contentId 
       : `did:dkg:content:${contentId}`;
     
-    // First, ensure content asset exists
     const sample = sampleDataset.find(s => 
       s.id === contentId || `did:dkg:content:${s.id}` === contentId
     );
@@ -290,7 +218,6 @@ export async function registerRoutes(app: FastifyInstance) {
       });
     }
     
-    // Check if case already exists for this content
     const existingCases = await dkgClient.getCasesByCreator(creatorDid);
     const existing = existingCases.data?.find(
       c => c.contentReference === contentReference
@@ -304,7 +231,6 @@ export async function registerRoutes(app: FastifyInstance) {
       });
     }
     
-    // Publish content asset first if it doesn't exist
     await dkgClient.publishContentAsset({
       '@context': 'https://schema.org',
       '@type': 'MediaObject',
@@ -322,7 +248,6 @@ export async function registerRoutes(app: FastifyInstance) {
       },
     });
     
-    // Create the case asset
     const result = await dkgClient.publishCaseAsset({
       '@context': 'https://schema.org',
       '@type': 'CreativeWork',
@@ -350,7 +275,6 @@ export async function registerRoutes(app: FastifyInstance) {
       });
     }
     
-    // Auto-process after a delay (simulates background job)
     setTimeout(() => {
       processAppealCase(result.assetId).catch(console.error);
     }, 2000);
@@ -377,7 +301,6 @@ export async function registerRoutes(app: FastifyInstance) {
     const { id } = request.params;
     const fullId = id.startsWith('did:') ? id : `did:dkg:case:${id}`;
     
-    // Check if case exists
     const caseResult = await dkgClient.getCaseAsset(fullId);
     if (!caseResult.data) {
       return reply.code(404).send({ success: false, error: 'Case not found' });
@@ -385,7 +308,6 @@ export async function registerRoutes(app: FastifyInstance) {
     
     const caseAsset = caseResult.data;
     
-    // Already priority
     if (caseAsset.priority) {
       return reply.code(400).send({
         success: false,
@@ -393,7 +315,6 @@ export async function registerRoutes(app: FastifyInstance) {
       });
     }
     
-    // Already resolved
     if (caseAsset.appealStatus.startsWith('resolved_')) {
       return reply.code(400).send({
         success: false,
@@ -401,11 +322,9 @@ export async function registerRoutes(app: FastifyInstance) {
       });
     }
     
-    // Check for payment in header or body
     const paymentHeader = request.headers['x-payment'];
     const paymentBody = request.body?.paymentPayload;
     
-    // If no payment provided, return 402
     if (!paymentHeader && !paymentBody && !request.body?.walletAddress) {
       const paymentRequired = x402.generatePaymentRequired(
         fullId,
@@ -418,18 +337,15 @@ export async function registerRoutes(app: FastifyInstance) {
         .send(paymentRequired);
     }
     
-    // Demo mode: allow wallet address to simulate payment
     let verificationResult;
     
     if (request.body?.walletAddress) {
-      // Generate mock payment for demo
       const mockPayment = x402.generateMockPayment(
         request.body.walletAddress,
         `/api/cases/${id}/fast-track`
       );
       verificationResult = await x402.verifyPayment(mockPayment, fullId);
     } else {
-      // Parse and verify real payment
       const paymentData = paymentHeader 
         ? x402.parsePaymentHeader(paymentHeader)
         : x402.parsePaymentHeader(paymentBody!);
@@ -451,7 +367,6 @@ export async function registerRoutes(app: FastifyInstance) {
       });
     }
     
-    // Update case to priority
     await dkgClient.updateCaseAsset(fullId, {
       priority: true,
       resolution: {
@@ -460,7 +375,6 @@ export async function registerRoutes(app: FastifyInstance) {
       },
     });
     
-    // Process immediately
     setTimeout(() => {
       processAppealCase(fullId).catch(console.error);
     }, 500);
@@ -505,10 +419,7 @@ export async function registerRoutes(app: FastifyInstance) {
    * GET /api/metrics - Get evaluation metrics
    */
   app.get('/api/metrics', async (request, reply) => {
-    // Get baseline from sample data
     const baseline = calculateBaselineAccuracy();
-    
-    // Get all resolved cases
     const allCases = await dkgClient.getAllCaseAssets();
     const cases = allCases.data || [];
     
@@ -518,8 +429,6 @@ export async function registerRoutes(app: FastifyInstance) {
     const pending = cases.filter(c => !c.appealStatus.startsWith('resolved_'));
     const priority = cases.filter(c => c.priority);
     
-    // Calculate post-GAL accuracy
-    // (Assumes all overturned cases were correct reversals)
     const correctedFalsePositives = overturned.length;
     const postGalAccuracy = baseline.total > 0
       ? (baseline.truePositives + baseline.trueNegatives + correctedFalsePositives) / baseline.total
@@ -606,51 +515,9 @@ export async function registerRoutes(app: FastifyInstance) {
   
   /**
    * POST /api/demo/seed - Seed demo data with processed appeals
-   * This creates pre-processed appeals to demonstrate the improvement story
    */
   app.post('/api/demo/seed', async (request, reply) => {
-    const falsePositives = sampleDataset.filter(s => s.isFalsePositive && s.guardianClassification !== 'safe');
-    const results = [];
-    
-    for (const sample of falsePositives) {
-      // Find the DKG content asset for this sample
-      const allContent = await dkgClient.getAllContentAssets();
-      const contentMatch = allContent.data?.find(c => c.contentHash === sample.contentHash);
-      
-      if (!contentMatch) continue;
-      
-      // Create case asset
-      const caseResult = await dkgClient.publishCaseAsset({
-        '@context': 'https://schema.org',
-        '@type': 'CreativeWork',
-        contentReference: contentMatch['@id'],
-        creatorDid: sample.creatorDid,
-        appealStatus: 'open',
-        appealStatement: `This content was incorrectly flagged as ${sample.guardianClassification}. ${sample.verificationNotes || 'I am the original creator and this is legitimate content.'}`,
-        priority: Math.random() > 0.5, // Random priority for demo variety
-        evidence: [],
-        resolution: {
-          '@type': 'Action',
-          status: 'pending',
-          decidedBy: null,
-          decisionTime: null,
-          confidenceScore: null,
-          reasoning: null,
-          paymentTx: null,
-        },
-      });
-      
-      // Process the appeal immediately
-      const processResult = await processAppealCase(caseResult.assetId);
-      
-      results.push({
-        sampleId: sample.id,
-        title: sample.title,
-        caseId: caseResult.assetId,
-        processed: processResult.success,
-        decision: processResult.resolution?.decision,
-      });
-    }
+    const results = await seedDemoAppeals();
     
     return reply.send({
       success: true,
@@ -740,6 +607,54 @@ export async function registerRoutes(app: FastifyInstance) {
       }
     });
   });
+}
+
+// ============================================================================
+// Exported seed function for auto-seeding on startup
+// ============================================================================
+
+export async function seedDemoAppeals() {
+  const falsePositives = sampleDataset.filter(s => s.isFalsePositive && s.guardianClassification !== 'safe');
+  const results = [];
+  
+  for (const sample of falsePositives) {
+    const allContent = await dkgClient.getAllContentAssets();
+    const contentMatch = allContent.data?.find(c => c.contentHash === sample.contentHash);
+    
+    if (!contentMatch) continue;
+    
+    const caseResult = await dkgClient.publishCaseAsset({
+      '@context': 'https://schema.org',
+      '@type': 'CreativeWork',
+      contentReference: contentMatch['@id'],
+      creatorDid: sample.creatorDid,
+      appealStatus: 'open',
+      appealStatement: `This content was incorrectly flagged as ${sample.guardianClassification}. ${sample.verificationNotes || 'I am the original creator.'}`,
+      priority: Math.random() > 0.5,
+      evidence: [],
+      resolution: {
+        '@type': 'Action',
+        status: 'pending',
+        decidedBy: null,
+        decisionTime: null,
+        confidenceScore: null,
+        reasoning: null,
+        paymentTx: null,
+      },
+    });
+
+    const processResult = await processAppealCase(caseResult.assetId);
+    results.push({
+      sampleId: sample.id,
+      title: sample.title,
+      caseId: caseResult.assetId,
+      processed: processResult.success,
+      decision: processResult.resolution?.decision || 'pending',
+    });
+  }
+  
+  console.log(`[Seed] Seeded ${results.length} demo appeals`);
+  return results;
 }
 
 export default registerRoutes;
