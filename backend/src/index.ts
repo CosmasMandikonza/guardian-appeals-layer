@@ -4,10 +4,9 @@
  * A verifiable appeals system for AI safety decisions
  * built on OriginTrail DKG × Polkadot × Umanitek Guardian
  */
-
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
-import { registerRoutes } from './routes/api.js';
+import { registerRoutes, seedDemoAppeals } from './routes/api.js';
 import { ingestAllSampleData } from './agents/guardianIngestAgent.js';
 
 // Configuration
@@ -65,6 +64,11 @@ async function start() {
     // Initialize sample data
     console.log('\n[Server] Initializing Guardian ingest...');
     await ingestAllSampleData();
+    
+    // Auto-seed demo appeals for hackathon
+    console.log('[Server] Auto-seeding demo appeals...');
+    await seedDemoAppeals();
+    console.log('[Server] Demo data ready!');
     
     // Start listening
     await app.listen({ port: PORT, host: HOST });

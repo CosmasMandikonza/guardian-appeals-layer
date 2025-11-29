@@ -19,11 +19,59 @@ import { sampleDataset, getFlaggedContent, calculateBaselineAccuracy } from '../
 import { processAppealCase, processAllPendingCases } from '../agents/evidenceAgent.js';
 import x402 from '../x402/handler.js';
 import { nanoid } from 'nanoid';
+import { sampleDataset } from '../data/sampleDataset.js';
 
-// ============================================================================
-// Types
-// ============================================================================
+// Exported seed function for auto-seeding on startup
+export async function seedDemoAppeals() {
+  const { dkgClient } = await import('../dkg/client.js');
+  const falsePositives = sampleDataset.filter(s => s.isFalsePositive && s.guardianClassification !== 'safe');
+  const results = [];
+  
+  for (const sample of falsePositives) {
+    const allContent = await dkgClient.getAllContentAssets();
+    const contentMatch = allContent.data?.find(c => c.contentHash === sample.contentHash);
+    
+    if (!contentMatch) continue;
+    
+    const caseResult = await dkgClient.publishCaseAsset({
+      '@context': 'https://schema.org',
+      '@type': 'CreativeWork',
+      contentReference: contentMatch['@id'],
+      creatorDid: sample.creatorDid,
+      appealStatus: 'open',
+      appealStatement: `This content was incorrectly flagged as ${sample.guardianClassification}. ${sample.verificationNotes || 'I am the original creator.'}`,
+      priority: Math.random() > 0.5,
+      evidence: [],
+      resolution: {
+        '@type': 'Action',
+        status: 'pending',
+        decidedBy: null,
+        decisionTime: null,
+        confidenceScore: null,
+        reasoning: null,
+        paymentTx: null,
+      },
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
 
+    if (caseResult.success) {
+      const { processAppeal } = await import('../agents/evidenceAgent.js');
+      const processed = await processAppeal(caseResult.data['@id']);
+      results.push({
+        sampleId: sample.id,
+        title: sample.title,
+        caseId: caseResult.data['@id'],
+        processed: processed.success,
+        decision: processed.data?.decision || 'pending',
+      });
+    }
+  }
+  
+  console.log(`[Seed] Seeded ${results.length} demo appeals`);
+  return results;
+}
+//Types
 interface CreateCaseBody {
   contentId: string;
   creatorDid: string;
